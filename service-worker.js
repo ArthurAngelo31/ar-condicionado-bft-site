@@ -1,4 +1,4 @@
-const CACHE = 'bft-v13';
+const CACHE = 'bft-v14';
 const ASSETS = [
   './', './index.html', './manifest.json',
   './css/style.css',

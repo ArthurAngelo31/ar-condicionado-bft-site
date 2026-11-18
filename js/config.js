@@ -13,7 +13,10 @@ const CFG = {
   IP_DEFAULT: USANDO_HTTPS ? 'pac-kind-streets-betty.trycloudflare.com' : 'bft-lab.local',
   PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
-  TIMEOUT: 4000,
+  // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
+  // e cada um mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local
+  // (mesma rede) continua rápido, sem motivo pra esperar tanto.
+  TIMEOUT: USANDO_HTTPS ? 15000 : 4000,
   MOCK_PWD: 'admin123',
   AUTO_REFRESH_MS: 10000
 };
