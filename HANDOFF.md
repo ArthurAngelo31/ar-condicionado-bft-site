@@ -103,8 +103,15 @@ Link público: https://arthurangelo31.github.io/ar-condicionado-bft-site/
   `ar-condicionado-bft/`, `git add -A && git commit -m "..." && git push`.
 - **Controle pelo link público via túnel Cloudflare** (`cloudflared tunnel
   --url http://bft-lab.local:80`, rodando no notebook): dá um endereço HTTPS
-  de verdade (ex: `https://pac-kind-streets-betty.trycloudflare.com`) que
-  reencaminha pro ESP na rede local. Isso existe porque uma página HTTPS
+  de verdade (hoje: `https://disclose-translated-dictionaries-documentary.trycloudflare.com`,
+  mas já caiu uma vez sem motivo claro - é um túnel anônimo, sem garantia de
+  uptime) que reencaminha pro ESP na rede local.
+  - **Se o link público parar de funcionar**: primeiro verifica se o
+    processo `cloudflared` ainda tá rodando (`Get-Process cloudflared`). Se
+    não tiver, roda `cloudflared tunnel --url http://bft-lab.local:80` de novo,
+    pega a URL nova que ele imprime, e atualiza `IP_DEFAULT` em
+    `js/config.js` (mais o `?v=` do `index.html` e o `CACHE` do
+    `service-worker.js`) com ela. Isso existe porque uma página HTTPS
   (GitHub Pages) não consegue chamar HTTP local (mixed content, bloqueado
   pelo navegador sempre, mesmo na mesma rede).
   - `js/config.js` detecta `location.protocol === 'https:'` e troca

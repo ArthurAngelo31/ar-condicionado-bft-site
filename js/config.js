@@ -10,13 +10,14 @@ const CFG = {
   // Local (http://IP-NOTEBOOK:8080): fala direto com o ESP via mDNS.
   // Público (https://...github.io): fala através do túnel Cloudflare.
   // Se o túnel cair/mudar de endereço, atualiza só essa linha.
-  IP_DEFAULT: USANDO_HTTPS ? 'pac-kind-streets-betty.trycloudflare.com' : 'bft-lab.local',
+  IP_DEFAULT: USANDO_HTTPS ? 'disclose-translated-dictionaries-documentary.trycloudflare.com' : 'bft-lab.local',
   PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
   // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
   // e cada um mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local
-  // (mesma rede) continua rápido, sem motivo pra esperar tanto.
-  TIMEOUT: USANDO_HTTPS ? 15000 : 4000,
+  // (mesma rede) o mDNS (.local) às vezes demora mais que um IP puro pra
+  // resolver, então 4s também já deu timeout falso - subi um pouco.
+  TIMEOUT: USANDO_HTTPS ? 15000 : 7000,
   MOCK_PWD: 'admin123',
   AUTO_REFRESH_MS: 10000
 };

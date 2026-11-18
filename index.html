@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="UTF-8">
@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..700,30..80&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="css/style.css?v=14">
+  <link rel="stylesheet" href="css/style.css?v=15">
 </head>
 <body>
 
@@ -46,7 +46,7 @@
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
             </svg>
           </button>
-          <button class="icon-btn" data-action="goto-admin" aria-label="Configurações">
+          <button class="icon-btn" data-action="goto-admin" aria-label="ConfiguraÃ§Ãµes">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3"/>
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -75,8 +75,8 @@
           </div>
           <div class="stat__divider"></div>
           <div class="stat">
-            <div class="stat__value stat__value--small" id="stat-agenda">—</div>
-            <div class="stat__label">Programação</div>
+            <div class="stat__value stat__value--small" id="stat-agenda">â€”</div>
+            <div class="stat__label">ProgramaÃ§Ã£o</div>
           </div>
         </div>
 
@@ -104,8 +104,8 @@
 
       <main class="sala">
         <div class="sala__header">
-          <div class="sala__eyebrow" id="sala-grupo">—</div>
-          <h2 class="sala__nome" id="sala-nome">—</h2>
+          <div class="sala__eyebrow" id="sala-grupo">â€”</div>
+          <h2 class="sala__nome" id="sala-nome">â€”</h2>
         </div>
 
         <div class="dial-wrap">
@@ -131,7 +131,7 @@
             <div class="dial__inner">
               <div class="dial__label">Temperatura</div>
               <div class="dial__temp" id="dial-temp">
-                <span id="dial-num">22</span><span class="dial__unit">°</span>
+                <span id="dial-num">22</span><span class="dial__unit">Â°</span>
               </div>
               <div class="dial__state">
                 <span class="dial__dot"></span>
@@ -146,7 +146,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="12" x2="18" y2="12"/></svg>
           </button>
           <div class="ctrl__range">
-            <div class="ctrl__range-value" id="ctrl-range-val">22°</div>
+            <div class="ctrl__range-value" id="ctrl-range-val">22Â°</div>
             <div class="ctrl__range-label">Ajuste</div>
           </div>
           <button class="ctrl__btn" id="btn-plus" aria-label="Aumentar" disabled>
@@ -170,7 +170,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <div class="topbar__brand" style="margin-left:0.6rem">
-          <div class="topbar__kicker">Configurações</div>
+          <div class="topbar__kicker">ConfiguraÃ§Ãµes</div>
           <div class="topbar__name">Painel Admin</div>
         </div>
         <div class="topbar__actions">
@@ -203,15 +203,15 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=14"></script>
-  <script src="js/theme.js?v=14"></script>
-  <script src="js/api.js?v=14"></script>
-  <script src="js/icons.js?v=14"></script>
-  <script src="js/modal.js?v=14"></script>
-  <script src="js/home.js?v=14"></script>
-  <script src="js/sala.js?v=14"></script>
-  <script src="js/admin.js?v=14"></script>
-  <script src="js/scheduler.js?v=14"></script>
-  <script src="js/app.js?v=14"></script>
+  <script src="js/config.js?v=15"></script>
+  <script src="js/theme.js?v=15"></script>
+  <script src="js/api.js?v=15"></script>
+  <script src="js/icons.js?v=15"></script>
+  <script src="js/modal.js?v=15"></script>
+  <script src="js/home.js?v=15"></script>
+  <script src="js/sala.js?v=15"></script>
+  <script src="js/admin.js?v=15"></script>
+  <script src="js/scheduler.js?v=15"></script>
+  <script src="js/app.js?v=15"></script>
 </body>
 </html>
