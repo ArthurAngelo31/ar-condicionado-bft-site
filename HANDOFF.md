@@ -188,8 +188,14 @@ Os comandos `1`..`7` disparam um "ligar"; a lista é a do código, em
 - A agenda é lida do ESP ao entrar no admin (não só do navegador).
 - Cada navegador (PC, celular, notebook) guarda sua própria lista de salas
   e IPs no `localStorage`: configurar em cada um.
-- `service-worker.js` usa `CACHE = 'bft-v12'`. Ao mudar JS/CSS, subir a versão,
+- `service-worker.js` usa `CACHE = 'bft-v14'`. Ao mudar JS/CSS, subir a versão,
   senão os celulares continuam com a cópia velha.
+- **GitHub Pages cacheia cada arquivo JS/CSS por até 10 minutos no CDN**
+  (`Cache-Control: max-age=600`), mesmo depois do deploy já estar "built".
+  Por isso `index.html` carrega cada `.js`/`.css` com `?v=14` no final —
+  isso muda a URL, então o CDN busca a versão nova na hora. **Toda vez que
+  mudar JS/CSS**: sobe o número em `?v=` de TODOS os `<script>`/`<link>` no
+  `index.html` (mesmo número do `CACHE` acima, pra não esquecer nenhum).
 - Campo "IP padrão do ESP32" (Admin → Geral) e o campo de IP por sala agora
   aceitam **hostname** também, não só IP numérico (pra caber o `bft-lab.local`
   do mDNS — ver seção acima). Validação em `enderecoValido()` (`admin.js`).
