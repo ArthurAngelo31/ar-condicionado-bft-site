@@ -1,8 +1,17 @@
 /* Configurações globais do app */
 
+// Quando o site é aberto por HTTPS (link público do GitHub Pages), o navegador
+// bloqueia pedido pra HTTP local (mixed content) - por isso usamos o túnel
+// Cloudflare (HTTPS de verdade) nesse caso. No site local (HTTP) usamos o
+// endereço mDNS direto, mais rápido e sem depender de internet.
+const USANDO_HTTPS = location.protocol === 'https:';
+
 const CFG = {
-  IP_DEFAULT: 'bft-lab.local', // endereço fixo do ESP (mDNS) - não muda trocando de rede, não precisa mais atualizar o IP aqui
-  PROTOCOL: 'http', // o ESP32 serve HTTP simples, não HTTPS
+  // Local (http://IP-NOTEBOOK:8080): fala direto com o ESP via mDNS.
+  // Público (https://...github.io): fala através do túnel Cloudflare.
+  // Se o túnel cair/mudar de endereço, atualiza só essa linha.
+  IP_DEFAULT: USANDO_HTTPS ? 'pac-kind-streets-betty.trycloudflare.com' : 'bft-lab.local',
+  PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
   TIMEOUT: 4000,
   MOCK_PWD: 'admin123',

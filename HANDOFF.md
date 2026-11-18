@@ -101,12 +101,28 @@ Link público: https://arthurangelo31.github.io/ar-condicionado-bft-site/
   consciente dele, não esquecimento.
 - Pra **atualizar o site publicado** depois de mudar algo: dentro da pasta
   `ar-condicionado-bft/`, `git add -A && git commit -m "..." && git push`.
-- **Controlar o ar pelo link público só funciona quando quem acessa está na
-  MESMA rede Wi-Fi do ESP** (o fetch é HTTP simples pro IP/hostname local).
-  Fora dessa rede, o site abre normal mas todas as salas aparecem "sem
-  conexão". Navegadores também podem bloquear o pedido HTTPS→HTTP local
-  (mixed content / Private Network Access) dependendo do navegador/versão —
-  se isso acontecer, só dá pra confirmar testando de verdade.
+- **Controle pelo link público via túnel Cloudflare** (`cloudflared tunnel
+  --url http://bft-lab.local:80`, rodando no notebook): dá um endereço HTTPS
+  de verdade (ex: `https://pac-kind-streets-betty.trycloudflare.com`) que
+  reencaminha pro ESP na rede local. Isso existe porque uma página HTTPS
+  (GitHub Pages) não consegue chamar HTTP local (mixed content, bloqueado
+  pelo navegador sempre, mesmo na mesma rede).
+  - `js/config.js` detecta `location.protocol === 'https:'` e troca
+    automaticamente: local usa `bft-lab.local` (HTTP, direto); público usa o
+    túnel (HTTPS). Só precisa trocar o endereço do túnel na constante
+    `IP_DEFAULT` se ele cair/mudar.
+  - **O túnel só existe enquanto o `cloudflared` estiver rodando no
+    notebook.** Fechou o terminal/notebook = link público para de controlar
+    o ar (volta a mostrar "sem conexão"). O endereço muda toda vez que o
+    túnel reinicia (é anônimo, sem conta Cloudflare) — precisa atualizar
+    `config.js` de novo nesse caso.
+  - **Risco de segurança aceito conscientemente pelo usuário**: com o túnel
+    ativo, o ESP fica alcançável pela internet inteira, não só pela rede da
+    escola. A senha do admin (`admin123`) já tá pública no repositório, e
+    `/wifi/reset` e `/teste` não têm senha nenhuma — qualquer um com o link
+    do túnel pode mexer no ar ou resetar o Wi-Fi do ESP enquanto ele tiver
+    ligado. Mitigar isso (trocar a senha, por exemplo) ficou como pendência,
+    não foi feito a pedido explícito do usuário.
 
 ## mDNS: endereço fixo do ESP (bft-lab.local)
 
