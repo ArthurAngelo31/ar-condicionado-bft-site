@@ -91,6 +91,23 @@ Passo a passo esperado:
 5. Testar pelo site: ligar, desligar, temperatura. Conferir olhando o ar.
 6. Ver o **alcance**: de quantos metros o Elgin ainda obedece.
 
+## Site publicado (GitHub Pages)
+
+Repositório: https://github.com/ArthurAngelo31/ar-condicionado-bft-site
+Link público: https://arthurangelo31.github.io/ar-condicionado-bft-site/
+
+- Repo **público**, criado a pedido do usuário mesmo sabendo que o firmware
+  tem as senhas em texto puro (`ADMIN_SENHA`, `WIFI_PORTAL_SENHA`) — decisão
+  consciente dele, não esquecimento.
+- Pra **atualizar o site publicado** depois de mudar algo: dentro da pasta
+  `ar-condicionado-bft/`, `git add -A && git commit -m "..." && git push`.
+- **Controlar o ar pelo link público só funciona quando quem acessa está na
+  MESMA rede Wi-Fi do ESP** (o fetch é HTTP simples pro IP/hostname local).
+  Fora dessa rede, o site abre normal mas todas as salas aparecem "sem
+  conexão". Navegadores também podem bloquear o pedido HTTPS→HTTP local
+  (mixed content / Private Network Access) dependendo do navegador/versão —
+  se isso acontecer, só dá pra confirmar testando de verdade.
+
 ## mDNS: endereço fixo do ESP (bft-lab.local)
 
 Pra não precisar atualizar o IP toda vez que o ESP troca de rede, o firmware
