@@ -18,9 +18,9 @@ const CFG = {
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
   // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
   // e cada um mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local
-  // (mesma rede) o mDNS (.local) às vezes demora mais que um IP puro pra
-  // resolver, então 4s também já deu timeout falso - subi um pouco.
-  TIMEOUT: USANDO_HTTPS ? 15000 : 7000,
+  // o notebook que roda o site tá com RAM muito baixa (ver HANDOFF), o que
+  // deixa até pedidos na rede local mais lentos que o normal - subi também.
+  TIMEOUT: USANDO_HTTPS ? 15000 : 10000,
   MOCK_PWD: 'admin123',
   AUTO_REFRESH_MS: 10000
 };
