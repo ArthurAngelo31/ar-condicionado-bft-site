@@ -10,7 +10,10 @@ const CFG = {
   // Local (http://IP-NOTEBOOK:8080): fala direto com o ESP via mDNS.
   // Público (https://...github.io): fala através do túnel Cloudflare.
   // Se o túnel cair/mudar de endereço, atualiza só essa linha.
-  IP_DEFAULT: USANDO_HTTPS ? 'discounts-designation-luck-displaying.trycloudflare.com' : 'bft-lab.local',
+  // mDNS (bft-lab.local) não funciona em alguns hotspots de celular (bloqueiam
+  // multicast mesmo sem isolar o resto). Por isso IP numérico direto aqui -
+  // se o ESP reconectar e mudar de IP, atualiza só essa linha.
+  IP_DEFAULT: USANDO_HTTPS ? 'discounts-designation-luck-displaying.trycloudflare.com' : '10.99.223.144',
   PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
   // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
