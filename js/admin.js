@@ -64,9 +64,11 @@ function renderAdmin() {
         <h3 class="admin-section__title">Conexão</h3>
         <div class="field">
           <label class="field__label" for="cfg-ip">IP ou endereço padrão do ESP32</label>
-          <input type="text" id="cfg-ip" class="field__input" value="${ip}" placeholder="192.168.1.100 ou bft-lab.local" autocomplete="off">
+          <input type="text" id="cfg-ip" class="field__input" value="${ip}" placeholder="192.168.1.100 ou bft-lab.local" autocomplete="off" ${USANDO_HTTPS ? 'disabled' : ''}>
         </div>
-        <p class="admin-hint">IP usado pelas salas que não têm um ESP próprio configurado. Login e programação são feitos em todos os ESPs das salas.</p>
+        <p class="admin-hint">${USANDO_HTTPS
+          ? 'Acessando pelo link público: esse endereço é atualizado automaticamente (túnel), não dá pra editar aqui.'
+          : 'IP usado pelas salas que não têm um ESP próprio configurado. Login e programação são feitos em todos os ESPs das salas.'}</p>
       </section>
       <section class="admin-section">
         <h3 class="admin-section__title">Salas e ESPs</h3>

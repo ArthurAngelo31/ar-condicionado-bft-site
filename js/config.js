@@ -63,7 +63,12 @@ const viewHistory = ['home'];
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const getIp = () => localStorage.getItem(SK.IP) || CFG.IP_DEFAULT;
+// No link público (HTTPS) só existe UM endereço possível (o túnel atual),
+// então ignoramos qualquer IP salvo antes no aparelho - sempre usa o mais
+// recente do código. Isso evita o problema de ficar preso num túnel antigo
+// depois que ele cai e um novo é criado. No site local, mantém o que foi
+// salvo (pode fazer sentido ter IP customizado por sala na rede local).
+const getIp = () => USANDO_HTTPS ? CFG.IP_DEFAULT : (localStorage.getItem(SK.IP) || CFG.IP_DEFAULT);
 
 // Lista de salas configurável: cada sala pode ter seu próprio ESP (campo ip),
 // ou deixar em branco para usar o IP padrão (salas que compartilham o mesmo ESP).
@@ -83,7 +88,10 @@ const getAgenda = () => {
 const setAgendaStorage = ag => localStorage.setItem(SK.AGENDA, JSON.stringify(ag));
 
 const getGrupoDaSala = id => getSalas().find(s => s.id === id)?.grupo || '';
+// No link público, o túnel só aponta pra UM destino (bft-lab.local) - não
+// faz sentido usar IP por sala salvo, por isso ignora também aqui.
 const getIpSala = id => {
+  if (USANDO_HTTPS) return getIp();
   const sala = getSalas().find(s => s.id === id);
   return (sala && sala.ip && sala.ip.trim()) || getIp();
 };
