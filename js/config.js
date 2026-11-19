@@ -17,10 +17,12 @@ const CFG = {
   PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
   // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
-  // e cada um mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local
-  // o notebook que roda o site tá com RAM muito baixa (ver HANDOFF), o que
-  // deixa até pedidos na rede local mais lentos que o normal - subi também.
-  TIMEOUT: USANDO_HTTPS ? 15000 : 10000,
+  // e cada um mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local:
+  // o notebook que roda o site tá gravemente sem RAM hoje (Windows comprimindo
+  // memória), e respostas do ESP mediram até ~20s por causa disso - não é a
+  // rede, é o notebook lento mesmo. Resolver de verdade = reiniciar o notebook
+  // quando der; até lá, timeout alto pra não falhar à toa.
+  TIMEOUT: USANDO_HTTPS ? 20000 : 20000,
   MOCK_PWD: 'admin123',
   AUTO_REFRESH_MS: 10000
 };
