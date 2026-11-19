@@ -13,16 +13,14 @@ const CFG = {
   // mDNS (bft-lab.local) não funciona em alguns hotspots de celular (bloqueiam
   // multicast mesmo sem isolar o resto). Por isso IP numérico direto aqui -
   // se o ESP reconectar e mudar de IP, atualiza só essa linha.
-  IP_DEFAULT: USANDO_HTTPS ? 'discounts-designation-luck-displaying.trycloudflare.com' : '10.99.223.144',
+  IP_DEFAULT: USANDO_HTTPS ? 'taxi-appliances-indication-deals.trycloudflare.com' : '10.99.223.144',
   PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
   // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
-  // e cada um mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local:
-  // o notebook que roda o site tá gravemente sem RAM hoje (Windows comprimindo
-  // memória), e respostas do ESP mediram até ~20s por causa disso - não é a
-  // rede, é o notebook lento mesmo. Resolver de verdade = reiniciar o notebook
-  // quando der; até lá, timeout alto pra não falhar à toa.
-  TIMEOUT: USANDO_HTTPS ? 20000 : 20000,
+  // mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local: normal
+  // seria rápido, mas o notebook já ficou sem RAM antes hoje (reiniciar
+  // resolve) - timeout um pouco folgado pra não falhar à toa se acontecer de novo.
+  TIMEOUT: USANDO_HTTPS ? 15000 : 8000,
   MOCK_PWD: 'admin123',
   AUTO_REFRESH_MS: 10000
 };
