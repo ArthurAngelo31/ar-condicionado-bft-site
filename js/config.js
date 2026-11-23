@@ -36,6 +36,45 @@ const SALAS_DEFAULT = [
   { id: 6, nome: 'Laboratório', grupo: 'LABORATÓRIO' }
 ];
 
+// Marcas/protocolos de ar-condicionado suportados (nomes exatos da biblioteca
+// IRremoteESP8266 no firmware - `strToDecodeType()` valida no ESP). Usado nos
+// dropdowns de "marca" de cada aparelho, no Admin > Salas.
+const MARCAS_AR = [
+  { v: 'COOLIX', l: 'Coolix (genérico - Gree, Philco, Springer antigos...)' },
+  { v: 'MIDEA', l: 'Midea / Springer Midea' },
+  { v: 'GREE', l: 'Gree' },
+  { v: 'ELECTRA_AC', l: 'Electra' },
+  { v: 'FUJITSU_AC', l: 'Fujitsu' },
+  { v: 'HITACHI_AC', l: 'Hitachi' },
+  { v: 'HITACHI_AC1', l: 'Hitachi (variante 1)' },
+  { v: 'TCL112AC', l: 'TCL' },
+  { v: 'DAIKIN', l: 'Daikin' },
+  { v: 'DAIKIN2', l: 'Daikin (variante 2)' },
+  { v: 'PANASONIC_AC', l: 'Panasonic' },
+  { v: 'MITSUBISHI_AC', l: 'Mitsubishi' },
+  { v: 'MITSUBISHI_HEAVY_88', l: 'Mitsubishi Heavy' },
+  { v: 'SAMSUNG_AC', l: 'Samsung' },
+  { v: 'LG', l: 'LG' },
+  { v: 'SHARP_AC', l: 'Sharp' },
+  { v: 'TOSHIBA_AC', l: 'Toshiba' },
+  { v: 'WHIRLPOOL_AC', l: 'Whirlpool / Consul' },
+  { v: 'KELVINATOR', l: 'Kelvinator' },
+  { v: 'YORK', l: 'York' },
+  { v: 'VOLTAS', l: 'Voltas' },
+  { v: 'CARRIER_AC', l: 'Carrier' },
+  { v: 'ARGO', l: 'Argo' },
+  { v: 'TROTEC', l: 'Trotec' },
+  { v: 'GOODWEATHER', l: 'Goodweather' },
+  { v: 'SANYO_AC', l: 'Sanyo' },
+  { v: 'HAIER_AC', l: 'Haier' },
+  { v: 'NEOCLIMA', l: 'Neoclima' },
+  { v: 'TECO', l: 'Teco' },
+  { v: 'AMCOR', l: 'Amcor' },
+  { v: 'CORONA_AC', l: 'Corona' },
+  { v: 'DELONGHI_AC', l: 'DeLonghi' }
+];
+const marcaLabel = v => MARCAS_AR.find(m => m.v === v)?.l || v || 'Não configurado';
+
 const AGENDA_DEFAULT = {
   ativa: false,
   horaLigar: '07:00',
@@ -48,6 +87,7 @@ const state = {
   view: 'home',
   salaId: null,
   sala: null,
+  aparelho: null, // 1 ou 2 quando controlando um aparelho específico da sala; null = sala toda
   op: false,
   adminTab: 'geral',
   salasCache: null,

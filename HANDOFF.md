@@ -19,6 +19,12 @@ causa raiz de quase todo o caos de rede dos dias 18-19/11, resolvida de vez.
 O IR é só de ida: o site mostra o **último comando enviado**, não o estado
 real do ar. Se alguém usar o controle remoto, o site não fica sabendo.
 
+**Novo (23/11, à tarde): até 2 ar-condicionados por sala, marcas diferentes.**
+Várias salas da escola têm 2 ar-condicionados de marcas diferentes. Agora dá
+pra configurar isso pelo Admin (sem precisar de 2 ESPs: o mesmo LED, montado
+pra alcançar os dois aparelhos, manda o sinal certo de cada marca) — ver
+seção "Múltiplos aparelhos por sala" mais abaixo.
+
 ## Estrutura
 
 ```
@@ -172,6 +178,57 @@ esperando alguém entrar.
   quem estiver na mesma rede Wi-Fi do ESP (ex: debug direto, `ACHAR-ESP.ps1`)
   - só o SITE não usa mais isso por padrão.
 
+## Múltiplos aparelhos por sala (até 2, marcas diferentes)
+
+**Por que existe**: várias salas da escola têm 2 ar-condicionados de marcas
+diferentes. Em vez de precisar de um ESP por aparelho, o mesmo LED IR (montado
+de forma a alcançar os dois aparelhos fisicamente) manda o sinal de cada marca
+separadamente - cada aparelho só reage ao sinal do protocolo dele, ignora o
+do outro.
+
+**Onde mexe**:
+- `firmware/.../esp32_laboratorio_philco.ino`: trocou o estado único
+  (`ligado`/`temperatura`/`acProtocol`) por um array `aparelhos[2]`, cada um
+  com seu `ligado`/`temperatura`/`protocolo`. `qtdAparelhos` (1 ou 2) e os 2
+  protocolos ficam salvos na NVS (`salvarConfigAparelhos()`).
+- `ponte-servidor/servidor.js`: cada sala guarda `qtd` + `protocolos` (as
+  marcas) e `desejado.aparelhos` (array), em vez de um único ligado/temp.
+  `desejado.alvo` diz pro ESP se é pra mandar sinal de **todos** os aparelhos
+  (automação/agenda/"sala toda") ou só de **um** específico (controle
+  individual pelo app).
+- `js/config.js`: lista `MARCAS_AR` com as marcas/protocolos suportados
+  (nomes exatos do `decode_type_t` da IRremoteESP8266 - o firmware valida com
+  `strToDecodeType()`/`IRac::isProtocolSupported()`).
+- `js/admin.js` (Admin > Salas e ESPs): cada sala agora tem um seletor "1 ou 2
+  aparelhos" e, se 2, um dropdown de marca pra cada um. Isso NÃO fica no
+  `localStorage` (como nome/grupo/IP) - é configuração de hardware, salva na
+  ponte/ESP via `POST /sala/:id/config` (autenticado), pra valer igual pra
+  qualquer navegador/celular que acessar aquela sala.
+- `js/sala.js`/`app.js`: ao abrir uma sala com 2 aparelhos, aparece uma tela
+  de escolha ("Ar-condicionado 1 · Marca X" / "Ar-condicionado 2 · Marca Y")
+  antes do controle; escolhendo um, o dial controla só aquele aparelho
+  (`state.aparelho` = 1 ou 2, passado pras chamadas de API). Sala com 1
+  aparelho só continua indo direto pro controle, sem a tela de escolha.
+
+**Rotas novas** (ESP direto E através da ponte, mesmo contrato):
+- `GET/POST /sala/:id/config` - `{qtd, protocolos: ["MIDEA","GREE"]}` (POST
+  exige admin).
+- `POST /sala/:id/aparelho/:n/ligar|desligar|temperatura` (`:n` = 1 ou 2) -
+  controla só aquele aparelho, sinal IR só da marca dele.
+- `/sala/:id/ligar|desligar|temperatura` (sem `/aparelho/`) continuam
+  existindo e agora significam **"todos os aparelhos da sala"** - usado pela
+  automação/agenda e por salas com 1 aparelho só (compatibilidade total).
+
+**Testando o protocolo de cada aparelho fisicamente** (Monitor Serial ou
+`/teste` no celular): os comandos `v`/`p<n>`/`1..7` continuam iguais, mas
+agora miram um "aparelho alvo" (padrão: Aparelho 1). Comandos novos no
+Serial: **`a1`/`a2`** trocam o alvo antes de testar. Na página `/teste`, os
+botões "Mirar Aparelho 1/2" fazem o mesmo. Fluxo pra configurar uma sala com
+2 aparelhos: desliga um dos dois ares, descobre o protocolo do outro com
+`/teste` (mirando o aparelho certo), repete pro segundo, depois define as
+2 marcas descobertas no Admin do site (isso é só confirmação/redundância -
+o que o app manda em `/sala/:id/config` sempre prevalece quando chega).
+
 ## Firmware: comandos e rotas
 
 Bibliotecas: `WiFiManager` (tzapu), `IRremoteESP8266` (crankyoldgit, classe
@@ -183,34 +240,45 @@ do `.ino`) - `sincronizarComPonte()` consulta a cada `PONTE_INTERVALO_MS`
 valida o certificado HTTPS da ponte - simplifica bastante no ESP32, mesmo
 nível de "confiança" que já existia com `/wifi/reset` e `/teste` sem senha).
 
-Rotas HTTP (CORS liberado):
+Rotas HTTP (CORS liberado), SALA TODA - "automação"/compatibilidade com salas
+de 1 aparelho:
 - `GET /sala/6/estado`, `POST /sala/6/ligar` `{temperatura}`,
   `POST /sala/6/desligar`, `POST /sala/6/temperatura` `{temperatura}` (18–24)
+
+Rotas de 1 aparelho específico (`:n` = 1 ou 2) e de config - ver seção
+"Múltiplos aparelhos por sala" acima:
+- `POST /sala/6/aparelho/:n/ligar|desligar|temperatura`
+- `GET/POST /sala/6/config` `{qtd, protocolos}`
+
+Admin:
 - `POST /admin/login` `{senha}` → `{token}` (token em memória: some se o ESP
   reiniciar → sair e entrar de novo no admin)
 - `GET/POST /admin/agenda` (header `X-Admin-Token`), salva na NVS
 - `POST /admin/senha` `{atual, nova}` (token; 403 se a atual estiver errada;
   4–32 caracteres; salva na NVS)
 - `GET /teste` página de teste de protocolo pro celular; `GET /teste/cmd?a=`
-  `next|prev|again|off|save|info`
+  `next|prev|again|off|save|info|ap1|ap2`
 - `GET /wifi/reset` apaga o Wi-Fi e reinicia no portal
 
 Monitor Serial (115200):
+- `a1`/`a2`: escolhe qual aparelho (1 ou 2) os comandos abaixo afetam
+  (padrão: Aparelho 1)
 - `1`..`7`: testa COOLIX, MIDEA, GREE, ELECTRA_AC, FUJITSU_AC, HITACHI_AC1,
-  TCL112AC (e salva); `0`: desliga no protocolo atual
+  TCL112AC (e salva no aparelho mirado); `0`: desliga no protocolo atual
 - `v`: varre todos os protocolos de ar (4s cada); Enter salva o atual
 - `pN`: testa e salva o protocolo número N (ex: `p34` = MIDEA)
 - `t`: LED aceso 5s direto (ver na câmera do celular)
 - `w`: apaga o Wi-Fi salvo e abre o portal `BFT-ESP-Setup`
 
-Fica salvo na placa (NVS, sobrevive a desligar): Wi-Fi, protocolo
-(`proto`), senha do admin (`senha`), agenda.
+Fica salvo na placa (NVS, sobrevive a desligar): Wi-Fi, quantidade de
+aparelhos (`qtd`) e protocolo de cada um (`proto`/`proto2`), senha do admin
+(`senha`), agenda.
 Senha de fábrica: `ADMIN_SENHA = "admin123"`. Esqueceu a senha: Arduino IDE →
 Tools → Erase All Flash Before Sketch Upload → Enabled, e gravar de novo
-(apaga também Wi-Fi, protocolo e agenda).
+(apaga também Wi-Fi, protocolos e agenda).
 
-Os comandos `1`..`7` disparam um "ligar"; a lista é a do código, em
-`menuSerial()`.
+Os comandos `1`..`7` disparam um "ligar" no aparelho mirado; a lista é a do
+código, em `menuSerial()`.
 
 ## Site: o que mudou nas últimas sessões
 
@@ -225,11 +293,11 @@ Os comandos `1`..`7` disparam um "ligar"; a lista é a do código, em
   `localStorage['bft_admin_token']`.
 - A agenda é lida/escrita através da ponte, que repassa pro ESP (ele que
   salva de verdade na NVS).
-- `service-worker.js` usa `CACHE = 'bft-v23'`. Ao mudar JS/CSS, subir a
+- `service-worker.js` usa `CACHE = 'bft-v24'`. Ao mudar JS/CSS, subir a
   versão, senão os celulares continuam com a cópia velha.
 - **GitHub Pages cacheia cada arquivo JS/CSS por até 10 minutos no CDN**
   (`Cache-Control: max-age=600`), mesmo depois do deploy já estar "built".
-  Por isso `index.html` carrega cada `.js`/`.css` com `?v=23` no final —
+  Por isso `index.html` carrega cada `.js`/`.css` com `?v=24` no final —
   isso muda a URL, então o CDN busca a versão nova na hora. **Toda vez que
   mudar JS/CSS**: sobe o número em `?v=` de TODOS os `<script>`/`<link>` no
   `index.html` (mesmo número do `CACHE` acima, pra não esquecer nenhum).
@@ -257,9 +325,15 @@ Os comandos `1`..`7` disparam um "ligar"; a lista é a do código, em
 ## Problemas conhecidos (não resolvidos)
 
 - **O firmware do ESP precisa ser regravado** pra ter a sincronização com a
-  ponte (`sincronizarComPonte()`) - sem isso, o ESP continua funcionando só
-  na rede local, não responde ao site. Lembrete de sempre: fechar a aba do
-  sketch no Arduino IDE sem salvar e abrir de novo antes de gravar.
+  ponte (`sincronizarComPonte()`) E o suporte a 2 aparelhos por sala - sem
+  isso, o ESP continua funcionando só na rede local, com 1 aparelho só. Lembrete
+  de sempre: fechar a aba do sketch no Arduino IDE sem salvar e abrir de novo
+  antes de gravar.
+  - **"Sketch too big" / "text section exceeds available space"**: o
+    HTTPS da ponte (`WiFiClientSecure`) deixou o firmware maior que a
+    partição padrão (1.2MB). **Antes de gravar**, no Arduino IDE vai em
+    **Tools → Partition Scheme → "Huge APP (3MB No OTA/1MB SPIFFS)"** (não
+    precisamos de OTA nem de SPIFFS nesse projeto).
 - `/wifi/reset` e `/teste` **não têm senha**: agora alcançável de qualquer
   lugar da internet através da ponte, não só da mesma rede - risco aceito
   conscientemente pelo usuário (ver seção da ponte). Proteger antes de usar
@@ -270,8 +344,9 @@ Os comandos `1`..`7` disparam um "ligar"; a lista é a do código, em
   local direto ao ESP, e vice-versa. Hoje as duas começam como `admin123`.
 - Se você editar as salas no admin, sair sem salvar e voltar, o rascunho
   antigo continua na tela (variável `salasDraft` em `admin.js`).
-- O firmware só controla UMA sala (`SALA_ID = 6`). As outras 5 salas do site
-  aparecem "sem conexão" até terem ESP.
+- Um firmware/ESP controla UMA sala (`SALA_ID = 6`), mas essa sala pode ter
+  até 2 aparelhos (ver "Múltiplos aparelhos por sala"). As outras 5 salas do
+  site aparecem "sem conexão" até terem ESP.
 - O IP do ESP pode mudar ao reiniciar (DHCP).
 - No PC do usuário o disco C: estava 100% cheio (causa não achada; suspeita
   de OneDrive). A compilação do Arduino foi apontada pro D: em

@@ -72,7 +72,11 @@ const API = {
       try {
         const resp = await fetchTO(espUrl(`/sala/${s.id}/estado`, s.id));
         validarResposta(resp);
-        return { id: s.id, nome: s.nome, ligado: !!resp.ligado, temperatura: resp.temperatura };
+        // Com 2 aparelhos, "ligado" no card da home reflete se QUALQUER um dos dois está ligado.
+        const aps = resp.aparelhos || [];
+        const ligado = aps.length ? aps.some(a => a.ligado) : !!resp.ligado;
+        const ligadoRef = aps.find(a => a.ligado) || aps[0];
+        return { id: s.id, nome: s.nome, ligado, temperatura: ligadoRef ? ligadoRef.temperatura : resp.temperatura };
       } catch {
         return { id: s.id, nome: s.nome, ligado: false, temperatura: 22, indefinido: true };
       }
@@ -80,7 +84,12 @@ const API = {
     return { salas: resultados };
   },
 
-  async obter(id) {
+  // `aparelho` (1 ou 2) manda pro endpoint daquele aparelho específico -
+  // sinal IR só dele. Sem `aparelho`, usa o endpoint "sala toda" (todos os
+  // aparelhos configurados, útil pra automação/agenda ou salas com 1 só).
+  // Não existe GET por aparelho no backend: a sala inteira já vem com o
+  // array `aparelhos`, então pega o estado agregado e recorta o que interessa.
+  async obter(id, aparelho) {
     syncMockSalas();
     if (CFG.USE_MOCK) {
       await sleep(140);
@@ -89,10 +98,15 @@ const API = {
       return { ...s };
     }
     const resp = await fetchTO(espUrl(`/sala/${id}/estado`, id));
-    return validarResposta(resp);
+    validarResposta(resp);
+    if (!aparelho) return resp;
+    const idx = aparelho - 1;
+    const ap = (resp.aparelhos || [])[idx];
+    if (!ap) throw new Error('Aparelho inexistente nessa sala');
+    return { id, aparelho, ligado: !!ap.ligado, temperatura: ap.temperatura };
   },
 
-  async ligar(id, temperatura = 22) {
+  async ligar(id, temperatura = 22, aparelho) {
     if (CFG.USE_MOCK) {
       await sleep(240);
       const s = mockState.salas.find(x => x.id === id);
@@ -100,7 +114,8 @@ const API = {
       s.ligado = true; s.temperatura = temperatura;
       return { ...s };
     }
-    const resp = await fetchTO(espUrl(`/sala/${id}/ligar`, id), {
+    const caminho = aparelho ? `/sala/${id}/aparelho/${aparelho}/ligar` : `/sala/${id}/ligar`;
+    const resp = await fetchTO(espUrl(caminho, id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ temperatura })
@@ -111,7 +126,7 @@ const API = {
     return resp;
   },
 
-  async desligar(id) {
+  async desligar(id, aparelho) {
     if (CFG.USE_MOCK) {
       await sleep(240);
       const s = mockState.salas.find(x => x.id === id);
@@ -119,14 +134,15 @@ const API = {
       s.ligado = false;
       return { ...s };
     }
-    const resp = await fetchTO(espUrl(`/sala/${id}/desligar`, id), { method: 'POST' });
+    const caminho = aparelho ? `/sala/${id}/aparelho/${aparelho}/desligar` : `/sala/${id}/desligar`;
+    const resp = await fetchTO(espUrl(caminho, id), { method: 'POST' });
     validarResposta(resp);
     if (resp.ligado !== false) throw new Error('ESP não confirmou o comando');
     if (resp.id !== id) throw new Error('ESP retornou sala incorreta');
     return resp;
   },
 
-  async setTemp(id, t) {
+  async setTemp(id, t, aparelho) {
     if (![18, 20, 22, 24].includes(t)) throw new Error('Temperatura inválida');
     if (CFG.USE_MOCK) {
       await sleep(200);
@@ -136,13 +152,35 @@ const API = {
       s.temperatura = t;
       return { ...s };
     }
-    const resp = await fetchTO(espUrl(`/sala/${id}/temperatura`, id), {
+    const caminho = aparelho ? `/sala/${id}/aparelho/${aparelho}/temperatura` : `/sala/${id}/temperatura`;
+    const resp = await fetchTO(espUrl(caminho, id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ temperatura: t })
     });
     validarResposta(resp);
     if (resp.temperatura !== t) throw new Error('ESP não confirmou a nova temperatura');
+    return resp;
+  },
+
+  // Quantos aparelhos a sala tem (1 ou 2) e a marca/protocolo de cada um.
+  // Leitura é pública (não precisa estar logado); gravação exige admin.
+  async getConfigSala(id) {
+    if (CFG.USE_MOCK) { await sleep(100); return { qtd: 1, protocolos: ['MIDEA', 'MIDEA'] }; }
+    return await fetchTO(espUrl(`/sala/${id}/config`, id));
+  },
+
+  async setConfigSala(id, { qtd, protocolos }) {
+    if (CFG.USE_MOCK) { await sleep(200); return { ok: true, qtd, protocolos }; }
+    const tokens = getTokens();
+    const ip = Object.keys(tokens)[0];
+    if (!ip) throw new Error('Não autenticado');
+    const resp = await fetchTO(espUrl(`/sala/${id}/config`, id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': tokens[ip] },
+      body: JSON.stringify({ qtd, protocolos })
+    }).catch(e => { throw new Error(e.message.includes('401') ? LOGIN_EXPIROU : e.message); });
+    if (!resp.ok) throw new Error('Não foi possível salvar a configuração dessa sala');
     return resp;
   },
 

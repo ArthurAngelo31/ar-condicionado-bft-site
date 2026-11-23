@@ -22,7 +22,9 @@ function renderSala(animTemp = false) {
   if (!s) return;
 
   $('sala-nome').textContent = s.nome;
-  $('sala-grupo').textContent = getGrupoDaSala(s.id);
+  $('sala-grupo').textContent = state.aparelho
+    ? `${getGrupoDaSala(s.id)} · Ar-condicionado ${state.aparelho}`
+    : getGrupoDaSala(s.id);
   document.title = `${s.nome} · Ar-cond. BFT`;
 
   // Estado visual sempre reflete a última resposta confirmada do ESP
@@ -59,18 +61,56 @@ function renderSala(animTemp = false) {
   $('btn-plus').disabled  = off || s.temperatura >= 24;
 }
 
-async function loadSala(id) {
+// `aparelho` (1 ou 2) controla só aquele aparelho da sala (sinal IR só da marca
+// dele); sem `aparelho`, controla a sala toda (todos os aparelhos juntos).
+async function loadSala(id, aparelho) {
   state.salaId = id;
+  state.aparelho = aparelho || null;
+  const def = getSalas().find(s => s.id === id);
+  const nome = def?.nome || `Sala ${id}`;
   try {
     // Só entra na tela após ESP responder
-    state.sala = await API.obter(id);
+    const resp = await API.obter(id, aparelho);
+    state.sala = { ...resp, nome };
   } catch (e) {
     // Estado indefinido: mostra "desconhecido" em vez de assumir desligado
-    const def = getSalas().find(s => s.id === id);
-    state.sala = { id, nome: def?.nome || `Sala ${id}`, ligado: false, temperatura: 22, indefinido: true };
+    state.sala = { id, nome, ligado: false, temperatura: 22, indefinido: true };
     toast(e.message || 'Sem conexão com o ESP', 'err');
   }
   renderSala();
+}
+
+// Abre a sala: se ela tiver 2 aparelhos configurados, mostra a escolha de qual
+// controlar primeiro; com 1 só, vai direto pro controle (comportamento de sempre).
+async function abrirSala(id) {
+  try {
+    const cfg = await API.getConfigSala(id);
+    if (cfg.qtd === 2) {
+      navTo('escolha-aparelho', { id });
+      renderEscolhaAparelho(id, cfg);
+      return;
+    }
+  } catch {}
+  navTo('sala', { id });
+  loadSala(id);
+}
+
+function renderEscolhaAparelho(id, cfg) {
+  const sala = getSalas().find(s => s.id === id);
+  $('escolha-grupo').textContent = getGrupoDaSala(id);
+  $('escolha-nome').textContent = sala?.nome || `Sala ${id}`;
+  document.title = `${sala?.nome || 'Sala'} · Ar-cond. BFT`;
+  const protocolos = cfg.protocolos || ['MIDEA', 'MIDEA'];
+  $('escolha-lista').innerHTML = [1, 2].map(n => `
+    <li class="sala-card" data-action="open-aparelho" data-id="${id}" data-aparelho="${n}">
+      <div class="sala-card__icon">${ICO.ar}</div>
+      <div class="sala-card__body">
+        <div class="sala-card__name">Ar-condicionado ${n}</div>
+        <div class="sala-card__meta"><span class="sala-card__dot"></span>${marcaLabel(protocolos[n - 1])}</div>
+      </div>
+      <div class="sala-card__arrow">${ICO.arrow}</div>
+    </li>
+  `).join('');
 }
 
 async function togglePower() {
@@ -87,11 +127,11 @@ async function togglePower() {
 
   try {
     const r = acaoLigar
-      ? await API.ligar(state.sala.id, state.sala.temperatura)
-      : await API.desligar(state.sala.id);
+      ? await API.ligar(state.sala.id, state.sala.temperatura, state.aparelho)
+      : await API.desligar(state.sala.id, state.aparelho);
 
     // ✅ ESP confirmou — só agora aceita o novo estado
-    state.sala = r;
+    state.sala = { ...r, nome: state.sala.nome };
     state.op = false;
     $('btn-power').classList.remove('spin');
     renderSala();
@@ -120,7 +160,8 @@ async function ajusteTemp(d) {
 
   try {
     // Só aceita nova temperatura quando ESP confirma
-    state.sala = await API.setTemp(state.sala.id, nv);
+    const r = await API.setTemp(state.sala.id, nv, state.aparelho);
+    state.sala = { ...r, nome: state.sala.nome };
     state.op = false;
     renderSala(true);
     toast(`Temperatura ajustada para ${nv}°`);

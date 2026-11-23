@@ -51,8 +51,13 @@ document.addEventListener('click', e => {
   else if (a === 'back') navBack();
   else if (a === 'open-sala') {
     const id = parseInt(t.dataset.id, 10);
+    abrirSala(id);
+  }
+  else if (a === 'open-aparelho') {
+    const id = parseInt(t.dataset.id, 10);
+    const aparelho = parseInt(t.dataset.aparelho, 10);
     navTo('sala', { id });
-    loadSala(id);
+    loadSala(id, aparelho);
   }
   else if (a === 'toggle-theme') toggleTheme();
   else if (a === 'desligar-todos') desligarTodas();

@@ -1,12 +1,14 @@
 /*
   Firmware ESP32 - Controle de Ar-condicionado via IR (BFT)
-  Sala: LABORATÓRIO - testando unidade MIDEA (antes: Philco)
+  Sala: LABORATÓRIO - até 2 aparelhos, cada um com sua marca/protocolo
 
   Bibliotecas (Arduino IDE > Gerenciador de Bibliotecas):
     - WiFiManager (tzapu)
     - IRremoteESP8266 (crankyoldgit)
     - ArduinoJson (bblanchon, v7+)
   Placa: qualquer ESP32 (ex: "ESP32 Dev Module")
+  Partition Scheme: Tools > Partition Scheme > "Huge APP (3MB No OTA/1MB SPIFFS)"
+  (o HTTPS da ponte deixa o firmware maior que a partição padrão de 1.2MB)
 
   HARDWARE (ver HANDOFF.md pra histórico completo). O código é o mesmo
   pras duas ligações abaixo, só muda a montagem:
@@ -19,6 +21,13 @@
     3V3 --[150ohm]-- anodo (+) do LED -- catodo (-) do LED -- COLETOR
     GPIO4 --[1k]-- BASE --[10k]-- GND
     EMISSOR -- GND   (GND do ESP comum a tudo)
+
+  2 APARELHOS NA MESMA SALA: o mesmo LED IR fica posicionado de forma a
+  alcançar os dois ar-condicionados. Cada aparelho tem seu próprio
+  protocolo (marca), configurado pelo app (Admin > Salas). Comandos "pra
+  sala toda" (automação/agenda) mandam o sinal de cada aparelho em
+  sequência, com uma pausa entre eles; comandos individuais (tela de
+  controle de 1 aparelho no app) mandam só o sinal daquele aparelho.
 */
 
 #include <WiFi.h>
@@ -48,16 +57,22 @@ const char* MDNS_HOST = "bft-lab"; // endereço fixo: http://bft-lab.local, não
 const char* PONTE_URL = "https://ar-condicionado-bft-ponte.onrender.com";
 const unsigned long PONTE_INTERVALO_MS = 3000; // a cada 3s - mantém o Render acordado tbm
 
-// Teste atual: Midea. Muitos Midea (e Springer Midea) usam o protocolo MIDEA, mas
-// alguns modelos usam COOLIX. Se não reagir, digite 1 (COOLIX) no Monitor Serial:
-// a escolha do menu passa a valer também pros comandos do site, até reiniciar.
-decode_type_t acProtocol = decode_type_t::MIDEA;
+// ===================== ESTADO POR APARELHO =====================
+// Até 2 ar-condicionados físicos na mesma sala, cada um com seu protocolo
+// (marca) - configurável pelo app (Admin > Salas) ou, pra descobrir o
+// protocolo de um aparelho específico, pelo Monitor Serial (comandos
+// a1/a2 escolhem o alvo, depois v/p<n> testam e salvam nele).
+// IR não tem retorno: o app nunca sabe o estado real do aparelho, só o
+// que foi enviado por último.
+const int MAX_APARELHOS = 2;
+struct Aparelho {
+  bool ligado = false;
+  int temperatura = 22;
+  decode_type_t protocolo = decode_type_t::MIDEA;
+};
+int qtdAparelhos = 1; // 1 ou 2, salvo na NVS
+Aparelho aparelhos[MAX_APARELHOS];
 
-// ===================== ESTADO =====================
-// "ligado"/"temperatura" são o ÚLTIMO comando que o ESP mandou por IR.
-// IR não tem retorno: o app nunca sabe o estado real do aparelho, só o que foi enviado.
-bool ligado = false;
-int temperatura = 22;
 String currentToken = "";
 String adminSenha = ADMIN_SENHA; // carregada da memória (NVS) no setup
 
@@ -105,7 +120,7 @@ bool autenticado() {
   return server.header("X-Admin-Token") == currentToken;
 }
 
-// ===================== PERSISTÊNCIA DA AGENDA (sobrevive a reboot) =====================
+// ===================== PERSISTÊNCIA (sobrevive a reboot) =====================
 void salvarAgenda() {
   prefs.begin("bft", false);
   prefs.putBool("ativa", agenda.ativa);
@@ -118,7 +133,17 @@ void salvarAgenda() {
   prefs.end();
 }
 
-void carregarAgenda() {
+// Quantidade de aparelhos e o protocolo de cada um - configurado pelo app
+// (Admin > Salas) ou pelo Monitor Serial (a1/a2 + v/p<n>).
+void salvarConfigAparelhos() {
+  prefs.begin("bft", false);
+  prefs.putInt("qtd", qtdAparelhos);
+  prefs.putInt("proto", (int)aparelhos[0].protocolo);
+  prefs.putInt("proto2", (int)aparelhos[1].protocolo);
+  prefs.end();
+}
+
+void carregarConfig() {
   prefs.begin("bft", true);
   agenda.ativa = prefs.getBool("ativa", false);
   agenda.horaLigar = prefs.getString("on", "07:00");
@@ -127,17 +152,11 @@ void carregarAgenda() {
   uint8_t mascara = prefs.getUChar("dias", 0b11111);
   for (int i = 0; i < 5; i++) agenda.diasAtivos[i] = mascara & (1 << i);
   adminSenha = prefs.getString("senha", ADMIN_SENHA);
-  acProtocol = (decode_type_t)prefs.getInt("proto", (int)acProtocol);
+  qtdAparelhos = prefs.getInt("qtd", 1);
+  if (qtdAparelhos < 1 || qtdAparelhos > MAX_APARELHOS) qtdAparelhos = 1;
+  aparelhos[0].protocolo = (decode_type_t)prefs.getInt("proto", (int)decode_type_t::MIDEA);
+  aparelhos[1].protocolo = (decode_type_t)prefs.getInt("proto2", (int)decode_type_t::MIDEA);
   prefs.end();
-}
-
-// Protocolo escolhido pelo menu fica salvo: sobrevive a tirar o ESP da tomada/USB.
-void salvarProtocolo(decode_type_t p) {
-  acProtocol = p;
-  prefs.begin("bft", false);
-  prefs.putInt("proto", (int)p);
-  prefs.end();
-  Serial.printf("Protocolo salvo: %s (vale pro site e depois de reiniciar)\n", typeToString(p).c_str());
 }
 
 // ===================== IR =====================
@@ -166,8 +185,32 @@ void enviarComandoAc(bool on, int temp, decode_type_t protocolo) {
                 typeToString(protocolo).c_str(), on ? "ON" : "OFF", temp);
 }
 
-void aplicarEstado() {
-  enviarComandoAc(ligado, temperatura, acProtocol);
+// Manda o sinal de UM aparelho específico (índice 0 ou 1), com o protocolo dele.
+void aplicarAparelho(int idx) {
+  if (idx < 0 || idx >= qtdAparelhos) return;
+  enviarComandoAc(aparelhos[idx].ligado, aparelhos[idx].temperatura, aparelhos[idx].protocolo);
+}
+
+// Manda o sinal de TODOS os aparelhos configurados, em sequência (pausa entre
+// eles quando são 2, cada um com seu protocolo). Usado pela automação/agenda
+// e pelos botões "ligar/desligar a sala toda".
+void aplicarTodos() {
+  for (int i = 0; i < qtdAparelhos; i++) {
+    if (i > 0) delay(400); // dá tempo do aparelho anterior processar antes do próximo sinal
+    aplicarAparelho(i);
+  }
+}
+
+// Manda o sinal só dos aparelhos que estão LIGADOS (evita reenviar "desligar"
+// pros que já estão desligados sem necessidade - usado ao mudar temperatura).
+void aplicarLigados() {
+  bool primeiro = true;
+  for (int i = 0; i < qtdAparelhos; i++) {
+    if (!aparelhos[i].ligado) continue;
+    if (!primeiro) delay(400);
+    aplicarAparelho(i);
+    primeiro = false;
+  }
 }
 
 // ===================== SINCRONIZAÇÃO COM A PONTE (endereço fixo na nuvem) =====================
@@ -192,8 +235,13 @@ void reportarEstadoNaPonte() {
 
   JsonDocument doc;
   JsonObject ap = doc["aplicado"].to<JsonObject>();
-  ap["ligado"] = ligado;
-  ap["temperatura"] = temperatura;
+  ap["qtd"] = qtdAparelhos;
+  JsonArray arr = ap["aparelhos"].to<JsonArray>();
+  for (int i = 0; i < qtdAparelhos; i++) {
+    JsonObject o = arr.add<JsonObject>();
+    o["ligado"] = aparelhos[i].ligado;
+    o["temperatura"] = aparelhos[i].temperatura;
+  }
   JsonObject ag = doc["agendaAplicada"].to<JsonObject>();
   ag["ativa"] = agenda.ativa;
   ag["horaLigar"] = agenda.horaLigar;
@@ -233,63 +281,115 @@ void sincronizarComPonte() {
     ultimoSeqAplicadoPonte = seq;
     primeiroContatoPonte = false;
   } else if (seq != ultimoSeqAplicadoPonte) {
-    ligado = doc["desejado"]["ligado"] | false;
-    temperatura = doc["desejado"]["temperatura"] | 22;
-    aplicarEstado();
+    if (doc["desejado"]["aparelhos"].is<JsonArray>()) {
+      JsonArray arr = doc["desejado"]["aparelhos"];
+      for (int i = 0; i < qtdAparelhos && i < (int)arr.size(); i++) {
+        aparelhos[i].ligado = arr[i]["ligado"] | false;
+        aparelhos[i].temperatura = arr[i]["temperatura"] | 22;
+      }
+    }
+    String alvo = doc["desejado"]["alvo"] | String("todos");
+    if (alvo == "todos") aplicarTodos();
+    else aplicarAparelho(alvo.toInt());
     ultimoSeqAplicadoPonte = seq;
   }
 
+  // Config (quantidade de aparelhos + protocolo de cada um), definida pelo
+  // app em Admin > Salas. Só regrava na NVS se algo realmente mudou, pra não
+  // desgastar a flash gravando a cada 3s à toa.
+  if (!doc["configDesejada"].isNull()) {
+    JsonObject cd = doc["configDesejada"];
+    int novoQtd = cd["qtd"] | qtdAparelhos;
+    decode_type_t novosProtocolos[MAX_APARELHOS];
+    for (int i = 0; i < MAX_APARELHOS; i++) novosProtocolos[i] = aparelhos[i].protocolo;
+    if (cd["protocolos"].is<JsonArray>()) {
+      JsonArray arr = cd["protocolos"];
+      for (int i = 0; i < MAX_APARELHOS && i < (int)arr.size(); i++) {
+        String nome = arr[i].as<String>();
+        decode_type_t p = strToDecodeType(nome.c_str());
+        if (IRac::isProtocolSupported(p)) novosProtocolos[i] = p;
+      }
+    }
+    bool mudouCfg = (novoQtd != qtdAparelhos);
+    for (int i = 0; i < MAX_APARELHOS; i++) if (novosProtocolos[i] != aparelhos[i].protocolo) mudouCfg = true;
+    if (mudouCfg && novoQtd >= 1 && novoQtd <= MAX_APARELHOS) {
+      qtdAparelhos = novoQtd;
+      for (int i = 0; i < MAX_APARELHOS; i++) aparelhos[i].protocolo = novosProtocolos[i];
+      salvarConfigAparelhos();
+    }
+  }
+
+  // Agenda, mesma lógica: só regrava se mudou de verdade.
   if (!doc["agendaDesejada"].isNull()) {
     JsonObject ad = doc["agendaDesejada"];
-    agenda.ativa = ad["ativa"] | agenda.ativa;
-    agenda.horaLigar = String((const char*)(ad["horaLigar"] | agenda.horaLigar.c_str()));
-    agenda.horaDesligar = String((const char*)(ad["horaDesligar"] | agenda.horaDesligar.c_str()));
-    agenda.tempLigar = ad["tempLigar"] | agenda.tempLigar;
+    bool novaAtiva = ad["ativa"] | agenda.ativa;
+    String novoLigar = String((const char*)(ad["horaLigar"] | agenda.horaLigar.c_str()));
+    String novoDesligar = String((const char*)(ad["horaDesligar"] | agenda.horaDesligar.c_str()));
+    int novoTemp = ad["tempLigar"] | agenda.tempLigar;
+    bool novosDias[5];
+    for (int i = 0; i < 5; i++) novosDias[i] = agenda.diasAtivos[i];
     if (ad["diasAtivos"].is<JsonArray>()) {
       JsonArray dias = ad["diasAtivos"];
-      for (int i = 0; i < 5 && i < (int)dias.size(); i++) agenda.diasAtivos[i] = dias[i];
+      for (int i = 0; i < 5 && i < (int)dias.size(); i++) novosDias[i] = dias[i];
     }
-    salvarAgenda();
-    agendaUltimoDisparo = "";
+    bool mudouAg = (novaAtiva != agenda.ativa || novoLigar != agenda.horaLigar ||
+                    novoDesligar != agenda.horaDesligar || novoTemp != agenda.tempLigar);
+    for (int i = 0; i < 5; i++) if (novosDias[i] != agenda.diasAtivos[i]) mudouAg = true;
+    if (mudouAg) {
+      agenda.ativa = novaAtiva;
+      agenda.horaLigar = novoLigar;
+      agenda.horaDesligar = novoDesligar;
+      agenda.tempLigar = novoTemp;
+      for (int i = 0; i < 5; i++) agenda.diasAtivos[i] = novosDias[i];
+      salvarAgenda();
+      agendaUltimoDisparo = "";
+    }
   }
 
   reportarEstadoNaPonte();
 }
 
-// ===================== HANDLERS HTTP =====================
+// ===================== HANDLERS HTTP (sala toda - "automação") =====================
 void handleEstado() {
   JsonDocument doc;
   doc["id"] = SALA_ID;
-  doc["ligado"] = ligado;
-  doc["temperatura"] = temperatura;
+  doc["qtd"] = qtdAparelhos;
+  doc["ligado"] = aparelhos[0].ligado;        // compat: topo = aparelho 1
+  doc["temperatura"] = aparelhos[0].temperatura;
+  JsonArray arr = doc["aparelhos"].to<JsonArray>();
+  for (int i = 0; i < qtdAparelhos; i++) {
+    JsonObject o = arr.add<JsonObject>();
+    o["ligado"] = aparelhos[i].ligado;
+    o["temperatura"] = aparelhos[i].temperatura;
+    o["protocolo"] = typeToString(aparelhos[i].protocolo);
+  }
   enviarJson(200, doc);
 }
 
 void handleLigar() {
   JsonDocument body;
   DeserializationError err = deserializeJson(body, server.arg("plain"));
-  int temp = (!err && body["temperatura"].is<int>()) ? (int)body["temperatura"] : temperatura;
+  int temp = (!err && body["temperatura"].is<int>()) ? (int)body["temperatura"] : aparelhos[0].temperatura;
   if (temp < 18 || temp > 24) { enviarErro(400, "Temperatura inválida"); return; }
 
-  ligado = true;
-  temperatura = temp;
-  aplicarEstado();
+  for (int i = 0; i < qtdAparelhos; i++) { aparelhos[i].ligado = true; aparelhos[i].temperatura = temp; }
+  aplicarTodos();
 
   JsonDocument doc;
   doc["id"] = SALA_ID;
   doc["ligado"] = true;
-  doc["temperatura"] = temperatura;
+  doc["temperatura"] = temp;
   enviarJson(200, doc);
 }
 
 void handleDesligar() {
-  ligado = false;
-  aplicarEstado();
+  for (int i = 0; i < qtdAparelhos; i++) aparelhos[i].ligado = false;
+  aplicarTodos();
 
   JsonDocument doc;
   doc["id"] = SALA_ID;
   doc["ligado"] = false;
-  doc["temperatura"] = temperatura;
+  doc["temperatura"] = aparelhos[0].temperatura;
   enviarJson(200, doc);
 }
 
@@ -299,18 +399,108 @@ void handleTemperatura() {
   if (err || !body["temperatura"].is<int>()) { enviarErro(400, "JSON inválido"); return; }
   int temp = body["temperatura"];
   if (temp < 18 || temp > 24) { enviarErro(400, "Temperatura inválida"); return; }
-  if (!ligado) { enviarErro(409, "Sala desligada"); return; }
 
-  temperatura = temp;
-  aplicarEstado();
+  bool algumLigado = false;
+  for (int i = 0; i < qtdAparelhos; i++) if (aparelhos[i].ligado) algumLigado = true;
+  if (!algumLigado) { enviarErro(409, "Sala desligada"); return; }
+
+  for (int i = 0; i < qtdAparelhos; i++) if (aparelhos[i].ligado) aparelhos[i].temperatura = temp;
+  aplicarLigados();
 
   JsonDocument doc;
   doc["id"] = SALA_ID;
-  doc["ligado"] = ligado;
-  doc["temperatura"] = temperatura;
+  doc["ligado"] = true;
+  doc["temperatura"] = temp;
   enviarJson(200, doc);
 }
 
+// ===================== HANDLERS HTTP (1 aparelho específico) =====================
+void enviarEstadoAparelho(int idx) {
+  JsonDocument doc;
+  doc["id"] = SALA_ID;
+  doc["aparelho"] = idx + 1;
+  doc["ligado"] = aparelhos[idx].ligado;
+  doc["temperatura"] = aparelhos[idx].temperatura;
+  enviarJson(200, doc);
+}
+
+void handleLigarAparelhoN(int idx) {
+  if (idx < 0 || idx >= qtdAparelhos) { enviarErro(400, "Aparelho inexistente nessa sala"); return; }
+  JsonDocument body;
+  DeserializationError err = deserializeJson(body, server.arg("plain"));
+  int temp = (!err && body["temperatura"].is<int>()) ? (int)body["temperatura"] : aparelhos[idx].temperatura;
+  if (temp < 18 || temp > 24) { enviarErro(400, "Temperatura inválida"); return; }
+  aparelhos[idx].ligado = true;
+  aparelhos[idx].temperatura = temp;
+  aplicarAparelho(idx);
+  enviarEstadoAparelho(idx);
+}
+void handleDesligarAparelhoN(int idx) {
+  if (idx < 0 || idx >= qtdAparelhos) { enviarErro(400, "Aparelho inexistente nessa sala"); return; }
+  aparelhos[idx].ligado = false;
+  aplicarAparelho(idx);
+  enviarEstadoAparelho(idx);
+}
+void handleTemperaturaAparelhoN(int idx) {
+  if (idx < 0 || idx >= qtdAparelhos) { enviarErro(400, "Aparelho inexistente nessa sala"); return; }
+  JsonDocument body;
+  DeserializationError err = deserializeJson(body, server.arg("plain"));
+  if (err || !body["temperatura"].is<int>()) { enviarErro(400, "JSON inválido"); return; }
+  int temp = body["temperatura"];
+  if (temp < 18 || temp > 24) { enviarErro(400, "Temperatura inválida"); return; }
+  if (!aparelhos[idx].ligado) { enviarErro(409, "Aparelho desligado"); return; }
+  aparelhos[idx].temperatura = temp;
+  aplicarAparelho(idx);
+  enviarEstadoAparelho(idx);
+}
+
+void handleLigarAparelho1() { handleLigarAparelhoN(0); }
+void handleLigarAparelho2() { handleLigarAparelhoN(1); }
+void handleDesligarAparelho1() { handleDesligarAparelhoN(0); }
+void handleDesligarAparelho2() { handleDesligarAparelhoN(1); }
+void handleTemperaturaAparelho1() { handleTemperaturaAparelhoN(0); }
+void handleTemperaturaAparelho2() { handleTemperaturaAparelhoN(1); }
+
+// ===================== CONFIG (quantidade de aparelhos + marca/protocolo de cada) =====================
+void handleGetConfig() {
+  JsonDocument doc;
+  doc["qtd"] = qtdAparelhos;
+  JsonArray arr = doc["protocolos"].to<JsonArray>();
+  for (int i = 0; i < MAX_APARELHOS; i++) arr.add(typeToString(aparelhos[i].protocolo));
+  enviarJson(200, doc);
+}
+
+void handleSetConfig() {
+  if (!autenticado()) { enviarErro(401, "Não autenticado"); return; }
+  JsonDocument body;
+  DeserializationError err = deserializeJson(body, server.arg("plain"));
+  if (err) { enviarErro(400, "JSON inválido"); return; }
+  int qtd = body["qtd"] | qtdAparelhos;
+  if (qtd < 1 || qtd > MAX_APARELHOS) { enviarErro(400, "Quantidade inválida"); return; }
+
+  decode_type_t novosProtocolos[MAX_APARELHOS];
+  for (int i = 0; i < MAX_APARELHOS; i++) novosProtocolos[i] = aparelhos[i].protocolo;
+  if (body["protocolos"].is<JsonArray>()) {
+    JsonArray arr = body["protocolos"];
+    for (int i = 0; i < qtd && i < (int)arr.size(); i++) {
+      String nome = arr[i].as<String>();
+      decode_type_t p = strToDecodeType(nome.c_str());
+      if (!IRac::isProtocolSupported(p)) { enviarErro(400, "Protocolo não suportado: " + nome); return; }
+      novosProtocolos[i] = p;
+    }
+  }
+
+  qtdAparelhos = qtd;
+  for (int i = 0; i < MAX_APARELHOS; i++) aparelhos[i].protocolo = novosProtocolos[i];
+  salvarConfigAparelhos();
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["qtd"] = qtdAparelhos;
+  enviarJson(200, doc);
+}
+
+// ===================== ADMIN (login, agenda, senha) =====================
 void handleLogin() {
   JsonDocument body;
   DeserializationError err = deserializeJson(body, server.arg("plain"));
@@ -408,23 +598,25 @@ void checarAgenda() {
 
   if (String(hhmm) == agenda.horaLigar) {
     agendaUltimoDisparo = chave;
-    ligado = true;
-    temperatura = agenda.tempLigar;
-    aplicarEstado();
-    Serial.println("[Agenda] Ligou automaticamente");
+    for (int i = 0; i < qtdAparelhos; i++) { aparelhos[i].ligado = true; aparelhos[i].temperatura = agenda.tempLigar; }
+    aplicarTodos();
+    Serial.println("[Agenda] Ligou automaticamente (todos os aparelhos da sala)");
   } else if (String(hhmm) == agenda.horaDesligar) {
     agendaUltimoDisparo = chave;
-    ligado = false;
-    aplicarEstado();
-    Serial.println("[Agenda] Desligou automaticamente");
+    for (int i = 0; i < qtdAparelhos; i++) aparelhos[i].ligado = false;
+    aplicarTodos();
+    Serial.println("[Agenda] Desligou automaticamente (todos os aparelhos da sala)");
   }
 }
 
 // ===================== PÁGINA DE TESTE DE PROTOCOLO (pelo celular, perto do ar) =====================
-// Abra http://<IP do ESP>/teste no celular. Cada "Próximo" manda "ligar 22C" no
-// próximo protocolo de ar suportado; "Funcionou! Salvar" grava o atual na NVS.
-// shortcut: sem senha (qualquer um na rede pode trocar o protocolo); proteger se for pra produção.
+// Abra http://<IP do ESP>/teste no celular. "Mirar Aparelho 1/2" escolhe em
+// qual dos dois aparelhos o teste age; cada "Próximo" manda "ligar 22C" no
+// próximo protocolo de ar suportado; "Funcionou! Salvar" grava o atual na NVS
+// naquele aparelho. shortcut: sem senha (qualquer um na rede pode trocar o
+// protocolo); proteger se for pra produção.
 int testeAtual = -1;
+int aparelhoTeste = 0; // 0 ou 1 - qual aparelho o Monitor Serial/página de teste está mirando agora
 
 int proximoSuportado(int de, int passo) {
   for (int n = 0; n <= kLastDecodeType + 1; n++) {
@@ -433,16 +625,19 @@ int proximoSuportado(int de, int passo) {
     if (de < 0) de = kLastDecodeType;
     if (IRac::isProtocolSupported((decode_type_t)de)) return de;
   }
-  return (int)acProtocol;
+  return (int)aparelhos[aparelhoTeste].protocolo;
 }
 
 const char PAGINA_TESTE[] = R"HTML(<!doctype html><html lang=pt-br><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Teste IR</title>
 <style>body{font-family:sans-serif;max-width:420px;margin:20px auto;padding:0 16px}
 button{width:100%;padding:18px;margin:6px 0;font-size:18px;border-radius:10px;border:1px solid #888}
-#s{font-size:22px;margin:16px 0;font-weight:bold}.ok{background:#1a7f37;color:#fff;border:0}</style>
+#s{font-size:22px;margin:16px 0;font-weight:bold}.ok{background:#1a7f37;color:#fff;border:0}
+.ap{display:flex;gap:8px}.ap button{margin:0;padding:10px;font-size:14px}
+.ap button.sel{background:#444;color:#fff;border:0}</style>
 <h2>Teste de protocolo IR</h2>
-<p>Ar desligado, LED apontado pro receptor. Aperte <b>Próximo</b> e espere uns 3s. Quando o ar apitar ou ligar, aperte <b>Funcionou</b>.</p>
+<div class=ap><button id=bap1 onclick="c('ap1')">Mirar Aparelho 1</button><button id=bap2 onclick="c('ap2')">Mirar Aparelho 2</button></div>
+<p>Ar desligado, LED apontado pro receptor do aparelho escolhido acima. Aperte <b>Próximo</b> e espere uns 3s. Quando o ar apitar ou ligar, aperte <b>Funcionou</b>.</p>
 <div id=s>Protocolo atual: ...</div>
 <button onclick="c('next')">Próximo ▶</button>
 <button onclick="c('again')">Repetir este</button>
@@ -450,7 +645,8 @@ button{width:100%;padding:18px;margin:6px 0;font-size:18px;border-radius:10px;bo
 <button onclick="c('off')">Desligar (neste protocolo)</button>
 <button class=ok onclick="c('save')">Funcionou! Salvar este</button>
 <script>async function c(a){s.textContent='Enviando...';try{const r=await(await fetch('/teste/cmd?a='+a)).json();
-s.textContent='p'+r.numero+' '+r.nome+(r.salvo?' (salvo, o site usa este)':'')}catch(e){s.textContent='Erro: '+e}}c('info')</script>)HTML";
+s.textContent='Aparelho '+r.aparelho+' - p'+r.numero+' '+r.nome+(r.salvo?' (salvo, o site usa este)':'');
+bap1.className=r.aparelho===1?'sel':'';bap2.className=r.aparelho===2?'sel':''}catch(e){s.textContent='Erro: '+e}}c('info')</script>)HTML";
 
 void handleTestePagina() {
   server.send(200, "text/html; charset=utf-8", PAGINA_TESTE);
@@ -458,26 +654,35 @@ void handleTestePagina() {
 
 void handleTesteCmd() {
   String a = server.arg("a");
-  if (testeAtual < 0) testeAtual = (int)acProtocol;
-  if (a == "next") testeAtual = proximoSuportado(testeAtual, 1);
+  if (testeAtual < 0) testeAtual = (int)aparelhos[aparelhoTeste].protocolo;
+
+  if (a == "ap1") { aparelhoTeste = 0; testeAtual = (int)aparelhos[0].protocolo; }
+  else if (a == "ap2") { aparelhoTeste = 1; testeAtual = (int)aparelhos[1].protocolo; }
+  else if (a == "next") testeAtual = proximoSuportado(testeAtual, 1);
   else if (a == "prev") testeAtual = proximoSuportado(testeAtual, -1);
 
   if (a == "next" || a == "prev" || a == "again") enviarComandoAc(true, 22, (decode_type_t)testeAtual);
   else if (a == "off") enviarComandoAc(false, 22, (decode_type_t)testeAtual);
-  else if (a == "save") salvarProtocolo((decode_type_t)testeAtual);
+  else if (a == "save") {
+    aparelhos[aparelhoTeste].protocolo = (decode_type_t)testeAtual;
+    salvarConfigAparelhos();
+    Serial.printf("Protocolo salvo no Aparelho %d: %s\n", aparelhoTeste + 1, typeToString((decode_type_t)testeAtual).c_str());
+  }
 
   JsonDocument doc;
   doc["numero"] = testeAtual;
   doc["nome"] = typeToString((decode_type_t)testeAtual);
-  doc["salvo"] = (testeAtual == (int)acProtocol);
+  doc["aparelho"] = aparelhoTeste + 1;
+  doc["salvo"] = (testeAtual == (int)aparelhos[aparelhoTeste].protocolo);
   enviarJson(200, doc);
 }
 
 // ===================== MENU DE TESTE DE PROTOCOLO (via Monitor Serial) =====================
 // Manda "ligar 22C" em cada protocolo de ar suportado, com 4s entre eles.
-// Quando o ar apitar/ligar, o usuário aperta Enter e o protocolo atual fica salvo.
+// Quando o ar apitar/ligar, o usuário aperta Enter e o protocolo atual fica
+// salvo no aparelho mirado (a1/a2, padrão: Aparelho 1).
 void varrerProtocolos() {
-  Serial.println("Varredura: aponte o LED pro ar. Quando ele APITAR ou LIGAR, aperte Enter.");
+  Serial.printf("Varredura no Aparelho %d. Aponte o LED pro ar. Quando ele APITAR ou LIGAR, aperte Enter.\n", aparelhoTeste + 1);
   while (Serial.available()) Serial.read();
   for (int i = 0; i <= kLastDecodeType; i++) {
     decode_type_t p = (decode_type_t)i;
@@ -489,7 +694,9 @@ void varrerProtocolos() {
       server.handleClient();
       if (Serial.available()) {
         while (Serial.available()) Serial.read();
-        salvarProtocolo(p);
+        aparelhos[aparelhoTeste].protocolo = p;
+        salvarConfigAparelhos();
+        Serial.printf("Protocolo salvo no Aparelho %d: %s (vale pro site e depois de reiniciar)\n", aparelhoTeste + 1, typeToString(p).c_str());
         Serial.println("Se apitou no anterior, digite p<numero> dele (ex: p18) pra confirmar.");
         return;
       }
@@ -522,13 +729,18 @@ void menuSerial() {
     Serial.println("LED apagado.");
     return;
   }
+  // "a1"/"a2" escolhe qual dos 2 aparelhos os comandos de teste abaixo (v, p<n>, 1..7) afetam.
+  if (linha.equalsIgnoreCase("a1")) { aparelhoTeste = 0; Serial.println("Testando/salvando agora pro Aparelho 1."); return; }
+  if (linha.equalsIgnoreCase("a2")) { aparelhoTeste = 1; Serial.println("Testando/salvando agora pro Aparelho 2."); return; }
   // "v" varre TODOS os protocolos de ar da biblioteca (pra marcas que ela não lista, ex: Elgin).
   if (linha.equalsIgnoreCase("v")) { varrerProtocolos(); return; }
-  // "p<numero>" testa e salva um protocolo pelo número mostrado na varredura (ex: p18).
+  // "p<numero>" testa e salva um protocolo pelo número mostrado na varredura (ex: p18), no aparelho mirado.
   if (linha.startsWith("p") || linha.startsWith("P")) {
     decode_type_t p = (decode_type_t)linha.substring(1).toInt();
     if (!IRac::isProtocolSupported(p)) { Serial.println("Numero de protocolo invalido."); return; }
-    salvarProtocolo(p);
+    aparelhos[aparelhoTeste].protocolo = p;
+    salvarConfigAparelhos();
+    Serial.printf("Protocolo salvo no Aparelho %d: %s\n", aparelhoTeste + 1, typeToString(p).c_str());
     enviarComandoAc(true, 22, p);
     return;
   }
@@ -542,14 +754,15 @@ void menuSerial() {
   const char* nomes[] = { "COOLIX", "MIDEA", "GREE", "ELECTRA_AC", "FUJITSU_AC", "HITACHI_AC1", "TCL112AC" };
 
   if (opc >= 1 && opc <= 7) {
-    salvarProtocolo(protocolos[opc - 1]);
-    Serial.printf("Testando %s: ligando em 22C...\n", nomes[opc - 1]);
-    enviarComandoAc(true, 22, acProtocol);
+    aparelhos[aparelhoTeste].protocolo = protocolos[opc - 1];
+    salvarConfigAparelhos();
+    Serial.printf("Testando %s no Aparelho %d: ligando em 22C...\n", nomes[opc - 1], aparelhoTeste + 1);
+    enviarComandoAc(true, 22, aparelhos[aparelhoTeste].protocolo);
   } else if (opc == 0) {
-    Serial.println("Enviando DESLIGAR no protocolo atual...");
-    enviarComandoAc(false, temperatura, acProtocol);
+    Serial.printf("Enviando DESLIGAR no protocolo atual do Aparelho %d...\n", aparelhoTeste + 1);
+    enviarComandoAc(false, aparelhos[aparelhoTeste].temperatura, aparelhos[aparelhoTeste].protocolo);
   } else {
-    Serial.println("1=COOLIX 2=MIDEA 3=GREE 4=ELECTRA_AC 5=FUJITSU_AC 6=HITACHI_AC1 7=TCL112AC  0=desligar  v=varrer todos  p<n>=usar protocolo n  w=trocar Wi-Fi  t=LED aceso 5s");
+    Serial.println("1=COOLIX 2=MIDEA 3=GREE 4=ELECTRA_AC 5=FUJITSU_AC 6=HITACHI_AC1 7=TCL112AC  0=desligar  v=varrer todos  p<n>=usar protocolo n  a1/a2=mirar aparelho 1 ou 2  w=trocar Wi-Fi  t=LED aceso 5s");
   }
 }
 
@@ -560,7 +773,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  carregarAgenda();
+  carregarConfig();
 
   WiFiManager wm;
   bool ok = wm.autoConnect(WIFI_PORTAL_SSID, WIFI_PORTAL_SENHA);
@@ -594,6 +807,22 @@ void setup() {
   server.on((base + "/desligar").c_str(), HTTP_OPTIONS, handlePreflight);
   server.on((base + "/temperatura").c_str(), HTTP_POST, handleTemperatura);
   server.on((base + "/temperatura").c_str(), HTTP_OPTIONS, handlePreflight);
+  server.on((base + "/config").c_str(), HTTP_GET, handleGetConfig);
+  server.on((base + "/config").c_str(), HTTP_POST, handleSetConfig);
+  server.on((base + "/config").c_str(), HTTP_OPTIONS, handlePreflight);
+
+  server.on((base + "/aparelho/1/ligar").c_str(), HTTP_POST, handleLigarAparelho1);
+  server.on((base + "/aparelho/1/ligar").c_str(), HTTP_OPTIONS, handlePreflight);
+  server.on((base + "/aparelho/1/desligar").c_str(), HTTP_POST, handleDesligarAparelho1);
+  server.on((base + "/aparelho/1/desligar").c_str(), HTTP_OPTIONS, handlePreflight);
+  server.on((base + "/aparelho/1/temperatura").c_str(), HTTP_POST, handleTemperaturaAparelho1);
+  server.on((base + "/aparelho/1/temperatura").c_str(), HTTP_OPTIONS, handlePreflight);
+  server.on((base + "/aparelho/2/ligar").c_str(), HTTP_POST, handleLigarAparelho2);
+  server.on((base + "/aparelho/2/ligar").c_str(), HTTP_OPTIONS, handlePreflight);
+  server.on((base + "/aparelho/2/desligar").c_str(), HTTP_POST, handleDesligarAparelho2);
+  server.on((base + "/aparelho/2/desligar").c_str(), HTTP_OPTIONS, handlePreflight);
+  server.on((base + "/aparelho/2/temperatura").c_str(), HTTP_POST, handleTemperaturaAparelho2);
+  server.on((base + "/aparelho/2/temperatura").c_str(), HTTP_OPTIONS, handlePreflight);
 
   server.on("/admin/login", HTTP_POST, handleLogin);
   server.on("/admin/login", HTTP_OPTIONS, handlePreflight);
@@ -612,7 +841,7 @@ void setup() {
   server.begin();
 
   Serial.println("Servidor HTTP pronto na porta 80.");
-  Serial.println("Menu de teste IR: 1=COOLIX 2=MIDEA 3=GREE 4=ELECTRA_AC 5=FUJITSU_AC 6=HITACHI_AC1 7=TCL112AC  0=desligar  v=varrer todos  p<n>=usar protocolo n  w=trocar Wi-Fi  t=LED aceso 5s");
+  Serial.println("1=COOLIX 2=MIDEA 3=GREE 4=ELECTRA_AC 5=FUJITSU_AC 6=HITACHI_AC1 7=TCL112AC  0=desligar  v=varrer todos  p<n>=usar protocolo n  a1/a2=mirar aparelho 1 ou 2  w=trocar Wi-Fi  t=LED aceso 5s");
 }
 
 void loop() {

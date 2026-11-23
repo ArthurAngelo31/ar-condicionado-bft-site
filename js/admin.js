@@ -3,6 +3,12 @@
 // Cópia de trabalho da lista de salas, editada no painel antes de salvar.
 let salasDraft = null;
 
+// Quantidade de aparelhos + marca de cada um, por sala (vem da ponte, não do
+// localStorage - é configuração de hardware, igual pra todo mundo que acessa
+// a mesma sala). Carregado sob demanda em renderSalasEditor().
+let configAparelhosCache = {}; // { [salaId]: {qtd, protocolos} }
+let configAparelhosCarregando = new Set();
+
 // Aceita IP numérico (192.168.1.100) ou hostname mDNS (bft-lab.local).
 const enderecoValido = v => /^(\d{1,3}\.){3}\d{1,3}$/.test(v) || /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/.test(v);
 
@@ -222,6 +228,21 @@ function renderAdmin() {
   $('agenda-save').addEventListener('click', saveAgenda);
 }
 
+// Busca (uma vez por sala) a quantidade de aparelhos + marca de cada um na
+// ponte, e redesenha o editor quando chegar - pra não travar a tela esperando.
+function carregarConfigAparelhos(id) {
+  if (configAparelhosCache[id] || configAparelhosCarregando.has(id)) return;
+  configAparelhosCarregando.add(id);
+  API.getConfigSala(id)
+    .then(cfg => { configAparelhosCache[id] = cfg; })
+    .catch(() => { configAparelhosCache[id] = { qtd: 1, protocolos: ['MIDEA', 'MIDEA'] }; })
+    .finally(() => { configAparelhosCarregando.delete(id); renderSalasEditor(); });
+}
+
+function opcoesMarca(selecionada) {
+  return MARCAS_AR.map(m => `<option value="${m.v}" ${m.v === selecionada ? 'selected' : ''}>${m.l}</option>`).join('');
+}
+
 // Renderiza a lista editável de salas a partir de `salasDraft` (inicializa a partir
 // do storage na primeira vez). Chamada de novo a cada adição/remoção.
 function renderSalasEditor() {
@@ -231,7 +252,12 @@ function renderSalasEditor() {
 
   const gruposExistentes = [...new Set(salasDraft.map(s => s.grupo).filter(Boolean))];
 
-  host.innerHTML = salasDraft.map((s, i) => `
+  host.innerHTML = salasDraft.map((s, i) => {
+    const cfg = configAparelhosCache[s.id];
+    if (!cfg) carregarConfigAparelhos(s.id);
+    const qtd = s._qtd ?? cfg?.qtd ?? 1;
+    const protocolos = s._protocolos ?? cfg?.protocolos ?? ['MIDEA', 'MIDEA'];
+    return `
     <div class="sala-edit" data-sala-id="${s.id}">
       <div class="sala-edit__head">
         <div class="admin-room__num">${i + 1}</div>
@@ -251,8 +277,39 @@ function renderSalasEditor() {
           <input type="text" class="field__input" data-field="ip" value="${(s.ip || '').replace(/"/g, '&quot;')}" placeholder="Padrão (${getIp()})" autocomplete="off">
         </div>
       </div>
-    </div>
-  `).join('') + `<datalist id="grupos-sugeridos">${gruposExistentes.map(g => `<option value="${g}">`).join('')}</datalist>`;
+      ${!cfg ? `<p class="admin-hint">Carregando configuração de ar-condicionados...</p>` : `
+      <div class="field">
+        <label class="field__label">Ar-condicionados nessa sala</label>
+        <select class="field__input" data-field="qtd">
+          <option value="1" ${qtd === 1 ? 'selected' : ''}>1 aparelho</option>
+          <option value="2" ${qtd === 2 ? 'selected' : ''}>2 aparelhos (marcas diferentes)</option>
+        </select>
+      </div>
+      <div class="sala-edit__row2">
+        <div class="field">
+          <label class="field__label">Marca do Ar-condicionado 1</label>
+          <select class="field__input" data-field="marca1">${opcoesMarca(protocolos[0])}</select>
+        </div>
+        ${qtd === 2 ? `
+        <div class="field">
+          <label class="field__label">Marca do Ar-condicionado 2</label>
+          <select class="field__input" data-field="marca2">${opcoesMarca(protocolos[1])}</select>
+        </div>` : ''}
+      </div>
+      <p class="admin-hint">${qtd === 2
+        ? 'O LED precisa alcançar os 2 aparelhos. Ao ligar/desligar a sala toda (ou pela agenda), o sinal de cada marca é enviado em sequência.'
+        : 'Pra uma sala com 2 ar-condicionados de marcas diferentes, mude pra "2 aparelhos".'}</p>
+      `}
+    </div>`;
+  }).join('') + `<datalist id="grupos-sugeridos">${gruposExistentes.map(g => `<option value="${g}">`).join('')}</datalist>`;
+
+  host.querySelectorAll('[data-field="qtd"]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      capturarSalasDraft();
+      vibrate(5);
+      renderSalasEditor();
+    });
+  });
 
   host.querySelectorAll('[data-remove-sala]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -281,12 +338,23 @@ function renderSalasEditor() {
 function capturarSalasDraft() {
   const host = $('salas-editor');
   if (!host) return;
-  salasDraft = Array.from(host.querySelectorAll('.sala-edit')).map(row => ({
-    id: parseInt(row.dataset.salaId, 10),
-    nome: row.querySelector('[data-field="nome"]').value,
-    grupo: row.querySelector('[data-field="grupo"]').value,
-    ip: row.querySelector('[data-field="ip"]').value
-  }));
+  salasDraft = Array.from(host.querySelectorAll('.sala-edit')).map(row => {
+    const qtdSel = row.querySelector('[data-field="qtd"]');
+    const marca1Sel = row.querySelector('[data-field="marca1"]');
+    const marca2Sel = row.querySelector('[data-field="marca2"]');
+    const base = {
+      id: parseInt(row.dataset.salaId, 10),
+      nome: row.querySelector('[data-field="nome"]').value,
+      grupo: row.querySelector('[data-field="grupo"]').value,
+      ip: row.querySelector('[data-field="ip"]').value
+    };
+    if (qtdSel) {
+      const qtd = parseInt(qtdSel.value, 10);
+      base._qtd = qtd;
+      base._protocolos = [marca1Sel ? marca1Sel.value : 'MIDEA', marca2Sel ? marca2Sel.value : 'MIDEA'];
+    }
+    return base;
+  });
 }
 
 async function saveGeral() {
@@ -325,6 +393,23 @@ async function saveGeral() {
     grupo: s.grupo.trim() || 'OUTROS',
     ip: s.ip.trim()
   }));
+
+  // Config de aparelhos (qtd + marca) é por sala, na ponte - salva só as que mudaram.
+  const configErros = [];
+  for (const s of salasDraft) {
+    if (s._qtd == null) continue;
+    const atual = configAparelhosCache[s.id];
+    const mudou = !atual || atual.qtd !== s._qtd ||
+      atual.protocolos[0] !== s._protocolos[0] || (s._qtd === 2 && atual.protocolos[1] !== s._protocolos[1]);
+    if (!mudou) continue;
+    try {
+      await API.setConfigSala(s.id, { qtd: s._qtd, protocolos: s._protocolos });
+      configAparelhosCache[s.id] = { qtd: s._qtd, protocolos: s._protocolos };
+    } catch (e) {
+      configErros.push(`${s.nome || 'sala ' + s.id}: ${e.message}`);
+    }
+  }
+
   setSalas(salasFinal);
   salasDraft = null;
   state.salasCache = null;
@@ -355,7 +440,8 @@ async function saveGeral() {
   restore();
   renderSalasEditor();
   vibrate(10);
-  toast('Configurações salvas');
+  if (configErros.length) toast(`Salvo, mas a config. de ar-condicionados falhou em: ${configErros.join('; ')}`, 'err');
+  else toast('Configurações salvas');
 }
 
 async function saveAgenda() {
