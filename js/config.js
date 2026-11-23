@@ -1,26 +1,19 @@
 /* Configurações globais do app */
 
-// Quando o site é aberto por HTTPS (link público do GitHub Pages), o navegador
-// bloqueia pedido pra HTTP local (mixed content) - por isso usamos o túnel
-// Cloudflare (HTTPS de verdade) nesse caso. No site local (HTTP) usamos o
-// endereço mDNS direto, mais rápido e sem depender de internet.
-const USANDO_HTTPS = location.protocol === 'https:';
-
+// Servidor-ponte: endereço FIXO de verdade (nuvem, Render). O site fala só
+// com ele, nunca direto com o ESP - o ESP é quem puxa a ponte sozinho (ver
+// ponte-servidor/servidor.js e o firmware). Isso acaba com os problemas de
+// IP mudando, mDNS não funcionando, hotspot bloqueando aparelho-a-aparelho
+// etc: não importa a rede de ninguém, todo mundo fala com esse 1 endereço.
 const CFG = {
-  // Local (http://IP-NOTEBOOK:8080): fala direto com o ESP via mDNS.
-  // Público (https://...github.io): fala através do túnel Cloudflare.
-  // Se o túnel cair/mudar de endereço, atualiza só essa linha.
-  // mDNS (bft-lab.local) não funciona em alguns hotspots de celular (bloqueiam
-  // multicast mesmo sem isolar o resto). Por isso IP numérico direto aqui -
-  // se o ESP reconectar e mudar de IP, atualiza só essa linha.
-  IP_DEFAULT: USANDO_HTTPS ? 'taxi-appliances-indication-deals.trycloudflare.com' : '10.99.223.144',
-  PROTOCOL: USANDO_HTTPS ? 'https' : 'http',
+  IP_DEFAULT: 'ar-condicionado-bft-ponte.onrender.com',
+  PROTOCOL: 'https',
   USE_MOCK: false,  // false = fala de verdade com os ESPs configurados em cada sala
-  // Pelo túnel (internet) cada pedido tem OPTIONS (preflight) + a chamada real,
-  // mediu ~2-8s de ida/volta nos testes - 4s estourava sempre. Local: normal
-  // seria rápido, mas o notebook já ficou sem RAM antes hoje (reiniciar
-  // resolve) - timeout um pouco folgado pra não falhar à toa se acontecer de novo.
-  TIMEOUT: USANDO_HTTPS ? 15000 : 8000,
+  // Plano grátis do Render "dorme" depois de 15min sem uso e pode demorar até
+  // uns 50s pra acordar no primeiro pedido depois disso. O ESP consultando a
+  // cada poucos segundos mantém ele acordado na maior parte do tempo, mas o
+  // timeout folgado cobre esse caso raro do primeiro pedido depois de dormir.
+  TIMEOUT: 30000,
   MOCK_PWD: 'admin123',
   AUTO_REFRESH_MS: 10000
 };
@@ -66,12 +59,9 @@ const viewHistory = ['home'];
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// No link público (HTTPS) só existe UM endereço possível (o túnel atual),
-// então ignoramos qualquer IP salvo antes no aparelho - sempre usa o mais
-// recente do código. Isso evita o problema de ficar preso num túnel antigo
-// depois que ele cai e um novo é criado. No site local, mantém o que foi
-// salvo (pode fazer sentido ter IP customizado por sala na rede local).
-const getIp = () => USANDO_HTTPS ? CFG.IP_DEFAULT : (localStorage.getItem(SK.IP) || CFG.IP_DEFAULT);
+// Só existe UM endereço possível agora (a ponte) - ignora qualquer IP salvo
+// antes no aparelho, pra nunca mais ficar preso num endereço antigo.
+const getIp = () => CFG.IP_DEFAULT;
 
 // Lista de salas configurável: cada sala pode ter seu próprio ESP (campo ip),
 // ou deixar em branco para usar o IP padrão (salas que compartilham o mesmo ESP).
@@ -91,12 +81,9 @@ const getAgenda = () => {
 const setAgendaStorage = ag => localStorage.setItem(SK.AGENDA, JSON.stringify(ag));
 
 const getGrupoDaSala = id => getSalas().find(s => s.id === id)?.grupo || '';
-// No link público, o túnel só aponta pra UM destino (bft-lab.local) - não
-// faz sentido usar IP por sala salvo, por isso ignora também aqui.
-const getIpSala = id => {
-  if (USANDO_HTTPS) return getIp();
-  const sala = getSalas().find(s => s.id === id);
-  return (sala && sala.ip && sala.ip.trim()) || getIp();
-};
+// A ponte distingue as salas pelo :id na URL (/sala/<id>/...), não por IP -
+// cada ESP tem seu próprio SALA_ID gravado no firmware. Por isso não faz mais
+// sentido ter "IP por sala" aqui, é sempre o mesmo endereço (a ponte).
+const getIpSala = id => getIp();
 
 const vibrate = ms => { if (navigator.vibrate) navigator.vibrate(ms); };

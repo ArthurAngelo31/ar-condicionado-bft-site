@@ -31,6 +31,8 @@
 #include <IRac.h>
 #include <IRutils.h>
 #include <ESPmDNS.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 // ===================== CONFIGURAÇÃO =====================
 const int SALA_ID = 6;                 // id da sala "Laboratório" cadastrada no app
@@ -39,6 +41,12 @@ const char* ADMIN_SENHA = "admin123";  // senha de fábrica; depois de trocada p
 const char* WIFI_PORTAL_SSID = "BFT-ESP-Setup";
 const char* WIFI_PORTAL_SENHA = "bft12345"; // mínimo 8 caracteres
 const char* MDNS_HOST = "bft-lab"; // endereço fixo: http://bft-lab.local, não muda mesmo trocando de rede
+
+// Servidor-ponte: endereço FIXO de verdade (nuvem), não depende de rede nem
+// de notebook ligado. O ESP consulta ele sozinho (o ESP nunca recebe conexão
+// de fora, só pergunta "tem comando novo?"). Ver ponte-servidor/servidor.js.
+const char* PONTE_URL = "https://ar-condicionado-bft-ponte.onrender.com";
+const unsigned long PONTE_INTERVALO_MS = 3000; // a cada 3s - mantém o Render acordado tbm
 
 // Teste atual: Midea. Muitos Midea (e Springer Midea) usam o protocolo MIDEA, mas
 // alguns modelos usam COOLIX. Se não reagir, digite 1 (COOLIX) no Monitor Serial:
@@ -160,6 +168,92 @@ void enviarComandoAc(bool on, int temp, decode_type_t protocolo) {
 
 void aplicarEstado() {
   enviarComandoAc(ligado, temperatura, acProtocol);
+}
+
+// ===================== SINCRONIZAÇÃO COM A PONTE (endereço fixo na nuvem) =====================
+// O ESP nunca recebe conexão de fora - só pergunta pra ponte "tem comando
+// novo?" de tempos em tempos. Funciona em qualquer rede, mesmo as que
+// bloqueiam conexão direta entre aparelhos (hotspot de celular etc).
+// setInsecure() = não valida o certificado HTTPS da ponte (simplifica muito
+// no ESP32; aceitável aqui pelo mesmo motivo de /wifi/reset e /teste não
+// terem senha - ver "Problemas conhecidos" no HANDOFF).
+long ultimoSeqAplicadoPonte = -1;
+bool primeiroContatoPonte = true;
+unsigned long ultimaSincPonte = 0;
+
+void reportarEstadoNaPonte() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(PONTE_URL) + "/dispositivo/" + String(SALA_ID) + "/estado";
+  if (!http.begin(client, url)) return;
+  http.setTimeout(8000);
+  http.addHeader("Content-Type", "application/json");
+
+  JsonDocument doc;
+  JsonObject ap = doc["aplicado"].to<JsonObject>();
+  ap["ligado"] = ligado;
+  ap["temperatura"] = temperatura;
+  JsonObject ag = doc["agendaAplicada"].to<JsonObject>();
+  ag["ativa"] = agenda.ativa;
+  ag["horaLigar"] = agenda.horaLigar;
+  ag["horaDesligar"] = agenda.horaDesligar;
+  ag["tempLigar"] = agenda.tempLigar;
+  JsonArray dias = ag["diasAtivos"].to<JsonArray>();
+  for (int i = 0; i < 5; i++) dias.add(agenda.diasAtivos[i]);
+
+  String corpo;
+  serializeJson(doc, corpo);
+  http.POST(corpo);
+  http.end();
+}
+
+void sincronizarComPonte() {
+  if (millis() - ultimaSincPonte < PONTE_INTERVALO_MS) return;
+  ultimaSincPonte = millis();
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(PONTE_URL) + "/dispositivo/" + String(SALA_ID) + "/comando";
+  if (!http.begin(client, url)) return;
+  http.setTimeout(8000);
+  int codigo = http.GET();
+  if (codigo != 200) { http.end(); return; }
+  String resposta = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  if (deserializeJson(doc, resposta)) return;
+
+  long seq = doc["desejado"]["seq"] | -1L;
+  if (primeiroContatoPonte) {
+    // Só sincroniza o número de sequência na primeira vez - não dispara IR
+    // sozinho assim que o ESP liga (evitaria repetir o último comando à toa).
+    ultimoSeqAplicadoPonte = seq;
+    primeiroContatoPonte = false;
+  } else if (seq != ultimoSeqAplicadoPonte) {
+    ligado = doc["desejado"]["ligado"] | false;
+    temperatura = doc["desejado"]["temperatura"] | 22;
+    aplicarEstado();
+    ultimoSeqAplicadoPonte = seq;
+  }
+
+  if (!doc["agendaDesejada"].isNull()) {
+    JsonObject ad = doc["agendaDesejada"];
+    agenda.ativa = ad["ativa"] | agenda.ativa;
+    agenda.horaLigar = String((const char*)(ad["horaLigar"] | agenda.horaLigar.c_str()));
+    agenda.horaDesligar = String((const char*)(ad["horaDesligar"] | agenda.horaDesligar.c_str()));
+    agenda.tempLigar = ad["tempLigar"] | agenda.tempLigar;
+    if (ad["diasAtivos"].is<JsonArray>()) {
+      JsonArray dias = ad["diasAtivos"];
+      for (int i = 0; i < 5 && i < (int)dias.size(); i++) agenda.diasAtivos[i] = dias[i];
+    }
+    salvarAgenda();
+    agendaUltimoDisparo = "";
+  }
+
+  reportarEstadoNaPonte();
 }
 
 // ===================== HANDLERS HTTP =====================
@@ -524,6 +618,7 @@ void setup() {
 void loop() {
   server.handleClient();
   menuSerial();
+  sincronizarComPonte();
 
   if (millis() - ultimaChecagemAgenda > 20000) {
     ultimaChecagemAgenda = millis();
