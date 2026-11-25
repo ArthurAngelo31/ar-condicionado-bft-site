@@ -122,7 +122,7 @@ const API = {
     });
     validarResposta(resp);
     if (resp.ligado !== true) throw new Error('ESP não confirmou o comando');
-    if (resp.id !== id) throw new Error('ESP retornou sala incorreta');
+    if (String(resp.id) !== String(id)) throw new Error('ESP retornou sala incorreta');
     return resp;
   },
 
@@ -138,7 +138,7 @@ const API = {
     const resp = await fetchTO(espUrl(caminho, id), { method: 'POST' });
     validarResposta(resp);
     if (resp.ligado !== false) throw new Error('ESP não confirmou o comando');
-    if (resp.id !== id) throw new Error('ESP retornou sala incorreta');
+    if (String(resp.id) !== String(id)) throw new Error('ESP retornou sala incorreta');
     return resp;
   },
 
